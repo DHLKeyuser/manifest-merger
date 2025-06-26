@@ -104,26 +104,6 @@
     }
   </style>
 </head>
-import React from 'react';
-import { Hyperspeed } from '@appletosolutions/reactbits';
-function App() {
- return (
-<div style={{ position: 'relative', width: '100%', height: '100vh', overflow: 'hidden' }}>
-<Hyperspeed
-       starColor="#FFCC00"
-       backgroundColor="#D40511"
-       speed={0.7}
-       count={300}
-     />
-<div style={{
-       position: 'absolute',
-       top: 0,
-       left: 0,
-       width: '100%',
-       height: '100%',
-       zIndex: 1,
-       overflow: 'auto'
-     }}>
 <body>
   <!-- Loader overlay -->
   <div id="loader-overlay">
@@ -659,10 +639,5 @@ if (qrEntries.length) {
       a.click();
     }
   </script>
-</div>
-</div>
- );
-}
-export default App;
 </body>
 </html>
