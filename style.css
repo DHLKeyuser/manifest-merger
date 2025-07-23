@@ -147,7 +147,6 @@ h1 {
  background: #e9ecef !important;
 }
 
-/* Loader overlay */
 #loader-overlay {
  display: none;
  position: fixed;
