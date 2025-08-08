@@ -260,7 +260,7 @@ async function extractFromPDF(file) {
             .reduce((s, m) => s + parseFloat(m[1].replace(',', '.')), 0);
         data.volume += [...flat.matchAll(/([\d,]+)\s*m³/g)]
             .reduce((s, m) => s + parseFloat(m[1].replace(',', '.')), 0);
-        data.huCount += (flat.match(/\b(1\d{8,}|200\d{7,})\b/g) || []).length;
+        data.huCount += (flat.match(/\b(13\d{5,}|200\d{7,})\b/g) || []).length;
 
         // Transport start
         const tsMatch = flat.match(/Transport start[:\s]*(\d{2}\.\d{2}\.\d{4}\s*\d{2}:\d{2})/i);
