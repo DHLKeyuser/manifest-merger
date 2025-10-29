@@ -22,6 +22,11 @@ const COL_HEADERS = [
 const COL_WIDTHS = [50, 60, 80, 70, 90, 130, 70, 110, 45, 75];
 const TABLE_W = COL_WIDTHS.reduce((a, b) => a + b, 0);
 const VALID_CODES = [];
+// Debug logging toggle. Set to true to enable verbose console logs.
+const DEBUG = false;
+function dlog(...args) {
+    if (DEBUG) console.debug('[Manifest]', ...args);
+}
 
 let pdfFiles = [];
 let qrEntries = [];
@@ -233,6 +238,58 @@ async function extractFromPDF(file) {
         currentService = '',
         prevArr = null;
 
+    // Precompute column x-ranges for mapping text items into table columns (index >= 1)
+    const colRanges = (() => {
+        const ranges = {};
+        let x = LEFT;
+        for (let i = 1; i < COL_HEADERS.length; i++) {
+            ranges[i] = { start: x, end: x + COL_WIDTHS[i] };
+            x += COL_WIDTHS[i];
+        }
+        return ranges;
+    })();
+
+    // Helper to extract HU IDs strictly: 1 + 6 digits OR 200 + 7 digits (exact lengths)
+    const extractHuIds = (text) => {
+        if (!text) return [];
+        const matches = text.match(/\b(?:1\d{6}|200\d{7})\b/g) || [];
+        return matches;
+    };
+
+    // Heuristic to determine if a page likely contains manifest content
+    const looksLikeManifest = (flatText) => /Loading\s*List|Logistics service provider:|Amount of orders:/i.test(flatText);
+
+    // Identify metadata/header-like lines to avoid false positives
+    const isHeaderOrMetaLike = (txt) => /^(ASML|Loading\s*List|Logistics service provider:|Service:|Orders:|Weight:|Volume:|Licence plate:|Remarks:|Transport start|Tracking and POD)/i.test(txt.trim());
+
+    // Validate a parsed row based on ID/HU presence and non-garbage content
+    const isValidDataRow = (cells) => {
+        // cells[3] -> Delivery ID / HU-ID column, cells[4] -> HU-Description, others contain supplemental data
+        const idField = `${cells[3] || ''}`.trim();
+        const descField = `${cells[4] || ''}`.trim();
+        const otherContent = [cells[1], cells[5], cells[6], cells[7]]
+            .map(v => (v || '').trim())
+            .filter(Boolean)
+            .length > 0;
+
+        const hasHu = extractHuIds(idField + ' ' + descField).length > 0;
+        const hasDeliveryLike = /\b(?:DN\s*\d{5,}|\d{8,12})\b/i.test(idField);
+        const notJustHeader = !(isHeaderOrMetaLike(idField) || isHeaderOrMetaLike(descField));
+
+        // Require either a delivery-like token or a valid HU, plus some other content, and avoid header/meta lines
+        return notJustHeader && (hasHu || hasDeliveryLike) && otherContent;
+    };
+
+    // Continuation lines: allow reusing previous ID only when text clearly starts under HU-Description column
+    const isContinuationCandidate = (cells, rowItems) => {
+        if ((cells[3] || '').trim() || (cells[4] || '').trim()) return false; // has its own IDs/text
+        const hasTrailingContent = [cells[5], cells[6], cells[7]]
+            .some(v => (v || '').trim().length > 0);
+        if (!hasTrailingContent) return false;
+        const minX = rowItems.reduce((m, it) => Math.min(m, it.x), Infinity);
+        return minX >= (colRanges[4]?.start || (LEFT + 1));
+    };
+
     for (let p = 1; p <= pdf.numPages; p++) {
         const pg = await pdf.getPage(p);
         const txt = await pg.getTextContent();
@@ -243,9 +300,10 @@ async function extractFromPDF(file) {
         }));
         const flat = items.map(i => i.str).join(' ');
 
-        // loading list
-        const llm = flat.match(/\b(\d{8,})\b/);
+        // loading list (prefer contextual patterns; fallback to broad numeric token)
+        const llm = flat.match(/(?:Shipment\s*ID|Loading\s*List)\s*[:#]?\s*([A-Z0-9\-]{6,})/i) || flat.match(/\b(\d{8,})\b/);
         if (llm) currentLoadingList = llm[1];
+        dlog(`Page ${p}: loading list candidate`, currentLoadingList || '(none)');
 
         // provider & service
         const pm = flat.match(/Logistics service provider:\s*(.*?)\s*Service:/);
@@ -260,7 +318,10 @@ async function extractFromPDF(file) {
             .reduce((s, m) => s + parseFloat(m[1].replace(',', '.')), 0);
         data.volume += [...flat.matchAll(/([\d,]+)\s*m³/g)]
             .reduce((s, m) => s + parseFloat(m[1].replace(',', '.')), 0);
-        data.huCount += new Set(flat.match(/\b(13\d{5,}|200\d{7,})\b/g) || []).size;
+        // strict HU counting per page (exact lengths)
+        const pageHuSet = new Set(extractHuIds(flat));
+        data.huCount += pageHuSet.size;
+        dlog(`Page ${p}: HU matches`, Array.from(pageHuSet));
 
         // Transport start
         const tsMatch = flat.match(/Transport start[:\s]*(\d{2}\.\d{2}\.\d{4}\s*\d{2}:\d{2})/i);
@@ -271,41 +332,65 @@ async function extractFromPDF(file) {
             });
         }
 
-        // build rows
-        const lines = {};
-        items.forEach(it => {
-            const key = Math.round(it.y / 5) * 5;
-            (lines[key] ||= []).push(it);
-        });
-        Object.keys(lines).sort((a, b) => b - a).forEach(key => {
-            const rowItems = lines[key].sort((a, b) => a.x - b.x);
-            if (!rowItems.some(it => it.str.startsWith('DN ') || /^\d{8,}$/.test(it.str))) return;
-            const arr = Array(COL_HEADERS.length).fill('');
-            arr[0] = currentLoadingList;
-            let xx = LEFT;
-            for (let i = 1; i < COL_HEADERS.length; i++) {
-                arr[i] = rowItems
-                    .filter(it => it.x >= xx && it.x < xx + COL_WIDTHS[i])
-                    .map(it => it.str.trim()).join(' ');
-                xx += COL_WIDTHS[i];
-            }
-            // VALID_CODES logic
-            const toks = arr[3].split(/\s+/);
-            const idx = toks.findIndex(t => VALID_CODES.includes(t.toUpperCase()));
-            if (idx !== -1) {
-                arr[3] = toks[idx].toUpperCase();
-                arr[4] = (toks.slice(idx + 1).join(' ') + ' ' + arr[4]).trim();
-            }
-            if (!arr[3] && !arr[4] && (arr[5] || arr[6] || arr[7]) && prevArr) {
-                arr[3] = prevArr[3];
-                arr[4] = prevArr[4];
-            }
-            arr[3] = arr[3].trim();
-            arr[4] = arr[4].trim();
-            arr[COL_HEADERS.length - 1] = currentService;
-            data.rows.push(arr);
-            prevArr = arr;
-        });
+        // Skip non-manifest-like pages for row parsing, but still allow QR extraction below
+        if (!looksLikeManifest(flat)) {
+            dlog(`Page ${p}: skipped for rows (not manifest-like)`);
+        } else {
+            // build rows
+            let rowsAddedThisPage = 0;
+            let lastAcceptedKey = null;
+            const lines = {};
+            items.forEach(it => {
+                const key = Math.round(it.y / 5) * 5;
+                (lines[key] ||= []).push(it);
+            });
+            Object.keys(lines).sort((a, b) => b - a).forEach(keyStr => {
+                const key = +keyStr;
+                const rowItems = lines[key].sort((a, b) => a.x - b.x);
+
+                // Map row items to table cells following the on-screen columns
+                const arr = Array(COL_HEADERS.length).fill('');
+                arr[0] = currentLoadingList;
+                let xx = LEFT;
+                for (let i = 1; i < COL_HEADERS.length; i++) {
+                    arr[i] = rowItems
+                        .filter(it => it.x >= xx && it.x < xx + COL_WIDTHS[i])
+                        .map(it => it.str.trim()).join(' ');
+                    xx += COL_WIDTHS[i];
+                }
+
+                // VALID_CODES logic on Delivery/HU cell
+                const toks = arr[3].split(/\s+/);
+                const idx = toks.findIndex(t => VALID_CODES.includes(t.toUpperCase()));
+                if (idx !== -1) {
+                    arr[3] = toks[idx].toUpperCase();
+                    arr[4] = (toks.slice(idx + 1).join(' ') + ' ' + arr[4]).trim();
+                }
+
+                // Decide if this is a legitimate data row or a wrapped continuation
+                if (isValidDataRow(arr)) {
+                    arr[3] = arr[3].trim();
+                    arr[4] = arr[4].trim();
+                    arr[COL_HEADERS.length - 1] = currentService;
+                    data.rows.push(arr);
+                    prevArr = arr;
+                    lastAcceptedKey = key;
+                    rowsAddedThisPage++;
+                } else if (prevArr && isContinuationCandidate(arr, rowItems) && lastAcceptedKey !== null && Math.abs(key - lastAcceptedKey) <= 20) {
+                    // Continuation line: safely reuse previous ID/description only in narrow context
+                    arr[3] = prevArr[3];
+                    arr[4] = prevArr[4];
+                    arr[COL_HEADERS.length - 1] = currentService;
+                    data.rows.push(arr);
+                    // prevArr remains the previous logical row
+                    lastAcceptedKey = key;
+                    rowsAddedThisPage++;
+                } else {
+                    // Junk/non-row -> skip
+                }
+            });
+            dlog(`Page ${p}: rows parsed`, rowsAddedThisPage);
+        }
 
         // extract QR
         const qrUrl = await extractQRCodeFromPage(pg);
@@ -314,6 +399,7 @@ async function extractFromPDF(file) {
                 loadingList: currentLoadingList,
                 dataUrl: qrUrl
             });
+            dlog(`Page ${p}: QR extracted for loading list`, currentLoadingList || '(none)');
         }
     }
 }
