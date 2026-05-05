@@ -98,15 +98,7 @@ The whole application runs **100% client-side in the browser** — no server, no
 Things that are planned or would be nice to add:
 
 - [ ] **Configurable templates.** Move the column headers, widths and parsing regexes into a JSON config so a non-developer can adapt the tool when the source manifest layout changes.
-- [ ] **Auto-detect template version.** Read a marker from the source PDF (provider name, version line, …) and pick the matching parsing profile automatically.
-- [ ] **Multi-language support** for the merged PDF labels (Driver / Loader / Remarks / …).
-- [ ] **Per-loading-list summary page** with totals split per shipment instead of a single grand-total header.
-- [ ] **Save / restore session** so a user can reload the page and keep their selected files in order.
-- [ ] **Unit tests** for `extractFromPDF`, using a small set of anonymised sample PDFs as fixtures.
-- [ ] **Drag-to-replace** files instead of always appending.
 - [ ] **Dark mode** and a more accessible color palette (current palette assumes a light background).
-- [ ] **Telemetry-free usage counter** stored in `localStorage`, just to show the user how many sheets they personally have saved.
-- [ ] **Packaging as a PWA** so it can be installed and used fully offline on the warehouse PCs.
 
 ---
 
@@ -122,7 +114,6 @@ These are the things that currently can bite you. Read them before opening a bug
 - **Browser-only.** Because everything happens in JavaScript in the browser, very large batches (hundreds of PDFs, thousands of rows) can be slow or run out of memory. For normal daily volumes this is not an issue.
 - **Hard-coded constants.** Page size (A4 landscape, 842×595 pt), font (Helvetica), margins and column widths are defined as constants at the top of `script.js`. Changing them requires editing the source.
 - **`VALID_CODES` is currently empty.** The HU-code disambiguation logic at `script.js` only kicks in when `VALID_CODES` is populated; until then, ambiguous Delivery / HU-ID columns fall back to the previous row's values.
-- **No automated tests.** Regressions in parsing can only be caught by running the tool against a real manifest and visually comparing the output.
 - **CDN dependencies.** The libraries are loaded from public CDNs (`jsdelivr`, `cdnjs`, `unpkg`). On networks that block these, the page will load but nothing will work. For offline use the libraries should be vendored locally.
 - **No error UI.** Most failures are reported with `alert()` or a silent console error. A proper toast / error panel would be a nice improvement.
 
@@ -136,8 +127,3 @@ This is a small internal tool — pull requests and issue reports are welcome. W
 2. Mention which template version the change targets.
 3. Verify that the output still renders correctly with at least 2–3 different manifests of varying sizes.
 
----
-
-## License
-
-Internal project. Add the appropriate license here before sharing externally.
