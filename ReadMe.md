@@ -8,7 +8,7 @@ Built as a **sustainability project**: by replacing the manual paper-based workf
 
 ## Why this project exists
 
-Before this tool existed, every truck loading required printing **each individual manifest PDF separately**, sorting them by hand, stapling them together, and physically handing the stack to the driver and the loader. The same QR codes and tracking barcodes had to be located, printed and matched manually.
+Before this tool existed, every truck loading required printing **each individual manifest PDF separately**, sorting them by hand, stapling them together, and physically handing the stack to the driver and the loader.
 
 The Manifest Merger replaces that workflow with a **one-click merge** that produces a single, well-formatted PDF.
 
